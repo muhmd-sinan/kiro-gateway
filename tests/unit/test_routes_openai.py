@@ -17,6 +17,7 @@ import pytest
 from unittest.mock import AsyncMock, Mock, patch, MagicMock
 from datetime import datetime, timezone
 import json
+import re
 import time
 
 from fastapi import HTTPException
@@ -379,6 +380,113 @@ class TestModelsEndpoint:
         
         for model in response.json()["data"]:
             assert model["owned_by"] == "anthropic"
+
+    def test_models_advertises_gpt_disguise_aliases(self, test_client, valid_proxy_api_key):
+        """
+        What it does: Confirms the dotted ``claude-{sol,terra,luna}-5.6``
+        aliases appear in ``/v1/models``, that the dash-form companions are NOT
+        listed (they resolve on input but would show up as duplicate picker
+        rows), and that the raw ``gpt-5.6-*`` ids do NOT appear, matching the
+        HIDDEN_FROM_LIST setup.
+        Purpose: End-to-end guarantee that Claude Desktop's picker sees exactly
+        one entry per underlying model, and never the raw ids.
+        """
+        print("Action: GET /v1/models with valid auth...")
+        response = test_client.get(
+            "/v1/models",
+            headers={"Authorization": f"Bearer {valid_proxy_api_key}"},
+        )
+        assert response.status_code == 200
+
+        model_ids = {m["id"] for m in response.json()["data"]}
+        print(f"Model IDs advertised: {sorted(model_ids)}")
+
+        expected_aliases = {
+            "claude-sol-5.6",
+            "claude-terra-5.6",
+            "claude-luna-5.6",
+        }
+        missing = expected_aliases - model_ids
+        assert not missing, f"Missing GPT disguise aliases from /v1/models: {missing}"
+
+        dash_forms = {
+            "claude-sol-5-6",
+            "claude-terra-5-6",
+            "claude-luna-5-6",
+        }
+        listed_dash_forms = dash_forms & model_ids
+        assert not listed_dash_forms, (
+            f"Dash-form companions leaked into /v1/models: {listed_dash_forms}. "
+            "They still resolve as input aliases, but listing them duplicates every "
+            "row in Claude Desktop's picker."
+        )
+
+        raw_ids = {"gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"}
+        leaked = raw_ids & model_ids
+        assert not leaked, (
+            f"Raw GPT ids leaked into /v1/models: {leaked}. "
+            "HIDDEN_FROM_LIST should suppress them so Claude Desktop only shows the disguised aliases."
+        )
+
+    def test_models_lists_each_underlying_model_once(self, test_client, valid_proxy_api_key):
+        """
+        What it does: Every advertised id resolves to a distinct underlying Kiro
+        model id.
+        Purpose: The picker showed each model twice (dotted alias + dash-form
+        companion of the same target); this locks the de-duplication in.
+        """
+        from kiro.config import HIDDEN_MODELS, MODEL_ALIASES
+        from kiro.model_resolver import get_model_id_for_kiro
+
+        print("Action: GET /v1/models with valid auth...")
+        response = test_client.get(
+            "/v1/models",
+            headers={"Authorization": f"Bearer {valid_proxy_api_key}"},
+        )
+        assert response.status_code == 200
+
+        model_ids = [m["id"] for m in response.json()["data"]]
+        assert len(model_ids) == len(set(model_ids)), "Duplicate ids in /v1/models"
+
+        resolved: dict = {}
+        collisions: list = []
+        for model_id in model_ids:
+            target = get_model_id_for_kiro(model_id, HIDDEN_MODELS, MODEL_ALIASES)
+            if target in resolved:
+                collisions.append((resolved[target], model_id, target))
+            resolved[target] = model_id
+
+        print(f"Resolved {len(model_ids)} ids to {len(resolved)} Kiro models")
+        assert not collisions, f"Multiple advertised ids map to the same Kiro model: {collisions}"
+
+    def test_models_advertise_no_context_marker(self, test_client, valid_proxy_api_key):
+        """
+        What it does: No advertised id or display_name carries a ``[Nm]`` /
+        ``[Nk]`` context tag.
+        Purpose: The long-context tag feature was removed - ids are advertised
+        plain. This locks the removal in so the suffix can't creep back.
+        """
+        print("Action: GET /v1/models with valid auth...")
+        response = test_client.get(
+            "/v1/models",
+            headers={"Authorization": f"Bearer {valid_proxy_api_key}"},
+        )
+        assert response.status_code == 200
+
+        data = response.json()["data"]
+        model_ids = [m["id"] for m in data]
+        print(f"Model IDs advertised: {sorted(model_ids)}")
+
+        tagged_ids = [m for m in model_ids if re.search(r'\[\d+[mk]\]$', m, re.IGNORECASE)]
+        assert not tagged_ids, f"Ids still carry a context tag: {tagged_ids}"
+
+        tagged_names = [
+            m["display_name"] for m in data
+            if re.search(r'\[\d+[mk]\]$', m.get("display_name", ""), re.IGNORECASE)
+        ]
+        assert not tagged_names, f"Display names still carry a context tag: {tagged_names}"
+
+        assert any(m.startswith("claude-") for m in model_ids), "Expected at least one Claude model"
 
 
 # =============================================================================

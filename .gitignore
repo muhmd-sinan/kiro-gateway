@@ -4,6 +4,11 @@
 credentials.json
 state.json
 
+# Secret backups (never commit real credentials)
+*.bak-*
+.env.bak*
+credentials.json.bak*
+
 # IDE
 .vscode/
 .idea/
@@ -31,3 +36,7 @@ requests/
 .pytest_cache/
 .coverage
 htmlcov/
+# kiro-gateway runtime artifacts (Windows helper scripts)
+kiro-gateway.pid
+kiro-gateway.log
+kiro-gateway.log.err

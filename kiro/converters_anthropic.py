@@ -42,6 +42,7 @@ from kiro.converters_core import (
     build_kiro_payload,
     extract_text_content,
     extract_images_from_content,
+    extract_documents_from_content,
 )
 
 
@@ -158,6 +159,44 @@ def extract_tool_results_from_anthropic_content(content: Any) -> List[Dict[str, 
                     "content": result_content or "(empty result)",
                 }
             )
+        elif block_type == "web_search_tool_result" and tool_use_id:
+            # Server-side web_search result echoed back by the client on the
+            # follow-up turn. Flatten it into a plain-text tool_result so Kiro
+            # sees the same shape it uses for client-side tools. Otherwise the
+            # search results are invisible to the model and it fabricates.
+            flattened_lines: list = []
+            if isinstance(result_content, list):
+                for i, r in enumerate(result_content, 1):
+                    if not isinstance(r, dict):
+                        continue
+                    rtype = r.get("type") or ""
+                    if rtype == "web_search_result":
+                        title = r.get("title") or "(untitled)"
+                        url = r.get("url") or ""
+                        snippet = r.get("encrypted_content") or r.get("snippet") or ""
+                        flattened_lines.append(f"{i}. {title}\n   URL: {url}\n   {snippet}")
+                    elif rtype == "web_search_tool_result_error":
+                        flattened_lines.append(
+                            f"[error] {r.get('error_message') or 'web_search failed'}"
+                        )
+                    else:
+                        flattened_lines.append(str(r))
+            elif isinstance(result_content, dict):
+                if result_content.get("type") == "web_search_tool_result_error":
+                    flattened_lines.append(
+                        f"[error] {result_content.get('error_message') or 'web_search failed'}"
+                    )
+                else:
+                    flattened_lines.append(str(result_content))
+
+            flat_text = "\n\n".join(flattened_lines) or "(empty web_search result)"
+            tool_results.append(
+                {
+                    "type": "tool_result",
+                    "tool_use_id": tool_use_id,
+                    "content": flat_text,
+                }
+            )
 
     return tool_results
 
@@ -238,7 +277,14 @@ def extract_tool_uses_from_anthropic_content(content: Any) -> List[Dict[str, Any
             tool_name = getattr(block, "name", None)
             tool_input = getattr(block, "input", {})
 
-        if block_type == "tool_use" and tool_id and tool_name:
+        # Accept both `tool_use` (client-side tools) and `server_tool_use`
+        # (server-side tools we emitted on a previous assistant turn, such as
+        # the native web_search block). Anthropic clients round-trip those
+        # blocks back to us in the next request; we must translate them to
+        # Kiro tool_calls the same way, otherwise Kiro sees an assistant
+        # turn with no visible tool activity and the follow-up prose never
+        # references the search.
+        if block_type in ("tool_use", "server_tool_use") and tool_id and tool_name:
             tool_calls.append(
                 {
                     "id": tool_id,
@@ -277,6 +323,7 @@ def convert_anthropic_messages(
     total_tool_calls = 0
     total_tool_results = 0
     total_images = 0
+    total_documents = 0
 
     for msg in messages:
         role = msg.role
@@ -285,16 +332,54 @@ def convert_anthropic_messages(
         # Extract text content
         text_content = convert_anthropic_content_to_text(content)
 
-        # Extract tool-related data and images based on role
+        # Extract tool-related data, images and documents based on role
         tool_calls = None
         tool_results = None
         images = None
+        documents = None
 
         if role == "assistant":
-            # Assistant messages may contain tool_use blocks
+            # Assistant messages may contain tool_use blocks (client tools) OR
+            # server_tool_use + web_search_tool_result pairs echoed back on a
+            # follow-up turn (Anthropic clients round-trip the full assistant
+            # history back to the gateway).
             tool_calls = extract_tool_uses_from_anthropic_content(content)
             if tool_calls:
                 total_tool_calls += len(tool_calls)
+
+            # Server-side web_search_tool_result blocks arrive on the ASSISTANT
+            # message (not on the user follow-up) because Anthropic's native
+            # spec pairs them with the server_tool_use in the same turn. Kiro
+            # only accepts toolResults on userInputMessage entries, so we split
+            # the assistant turn: (a) an assistant message with toolUses, then
+            # (b) a synthetic user message that carries the toolResults. This
+            # is exactly the shape client-tool round-trips already use and it
+            # keeps the search snippets visible to the model on the next turn.
+            server_tool_results = extract_tool_results_from_anthropic_content(content)
+            if server_tool_results:
+                total_tool_results += len(server_tool_results)
+
+            assistant_msg = UnifiedMessage(
+                role="assistant",
+                content=text_content,
+                tool_calls=tool_calls if tool_calls else None,
+                tool_results=None,
+                images=None,
+            )
+            unified_messages.append(assistant_msg)
+
+            if server_tool_results:
+                synthetic_user = UnifiedMessage(
+                    role="user",
+                    content="",
+                    tool_calls=None,
+                    tool_results=server_tool_results,
+                    images=None,
+                )
+                unified_messages.append(synthetic_user)
+
+            # Skip the tail-end unified_messages.append() below for this branch.
+            continue
 
         elif role == "user":
             # User messages may contain tool_result blocks and images
@@ -317,20 +402,27 @@ def convert_anthropic_messages(
             if images:
                 total_images += len(images)
 
+            # Extract documents (e.g. PDFs) from user messages
+            documents = extract_documents_from_content(content)
+            if documents:
+                total_documents += len(documents)
+
         unified_msg = UnifiedMessage(
             role=role,
             content=text_content,
             tool_calls=tool_calls if tool_calls else None,
             tool_results=tool_results if tool_results else None,
             images=images if images else None,
+            documents=documents if documents else None,
         )
         unified_messages.append(unified_msg)
 
-    # Log summary if any tool content or images were found
-    if total_tool_calls > 0 or total_tool_results > 0 or total_images > 0:
+    # Log summary if any tool content, images or documents were found
+    if total_tool_calls > 0 or total_tool_results > 0 or total_images > 0 or total_documents > 0:
         logger.debug(
             f"Converted {len(messages)} Anthropic messages: "
-            f"{total_tool_calls} tool_calls, {total_tool_results} tool_results, {total_images} images"
+            f"{total_tool_calls} tool_calls, {total_tool_results} tool_results, "
+            f"{total_images} images, {total_documents} documents"
         )
 
     return unified_messages

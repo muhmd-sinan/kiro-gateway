@@ -95,12 +95,16 @@ class UnifiedMessage:
         tool_results: List of tool results (for user messages with tool responses)
         images: List of images in unified format (for multimodal user messages)
                 Format: [{"media_type": "image/jpeg", "data": "base64..."}]
+        documents: List of documents in unified format (e.g. PDFs) for the
+                current user message.
+                Format: [{"media_type": "application/pdf", "data": "base64...", "name": "file.pdf"}]
     """
     role: str
     content: Any = ""
     tool_calls: Optional[List[Dict[str, Any]]] = None
     tool_results: Optional[List[Dict[str, Any]]] = None
     images: Optional[List[Dict[str, Any]]] = None
+    documents: Optional[List[Dict[str, Any]]] = None
 
 
 @dataclass
@@ -166,8 +170,9 @@ def extract_text_content(content: Any) -> str:
         text_parts = []
         for item in content:
             if isinstance(item, dict):
-                # Skip image and tool_reference blocks - they're handled separately
-                if item.get("type") in ("image", "image_url", "tool_reference"):
+                # Skip image, document and tool_reference blocks - handled separately.
+                # (document/file carry base64 payloads that must not leak into text.)
+                if item.get("type") in ("image", "image_url", "document", "file", "tool_reference"):
                     continue
                 if item.get("type") == "text":
                     text_parts.append(item.get("text", ""))
@@ -293,8 +298,131 @@ def extract_images_from_content(content: Any) -> List[Dict[str, Any]]:
     
     if images:
         logger.debug(f"Extracted {len(images)} image(s) from content")
-    
+
     return images
+
+
+def extract_documents_from_content(content: Any) -> List[Dict[str, Any]]:
+    """
+    Extracts documents (e.g. PDFs) from message content in unified format.
+
+    Supports the document/file block shapes used by different APIs:
+
+    Anthropic format (document with source):
+        {"type": "document", "title": "spec.pdf",
+         "source": {"type": "base64", "media_type": "application/pdf", "data": "JVBER..."}}
+
+    OpenAI format (file block):
+        {"type": "file", "file": {"filename": "spec.pdf",
+         "file_data": "data:application/pdf;base64,JVBER..."}}
+
+    Args:
+        content: Content in any supported format (usually a list of content blocks)
+
+    Returns:
+        List of documents in unified format:
+        [{"media_type": "application/pdf", "data": "base64...", "name": "spec.pdf"}]
+        Empty list if no documents found or content is not a list.
+
+    Example:
+        >>> extract_documents_from_content([{"type": "document", "source": {"type": "base64", "media_type": "application/pdf", "data": "abc"}}])
+        [{'media_type': 'application/pdf', 'data': 'abc', 'name': 'document.pdf'}]
+    """
+    documents: List[Dict[str, Any]] = []
+
+    if not isinstance(content, list):
+        return documents
+
+    for item in content:
+        # Handle both dict and Pydantic model objects
+        if isinstance(item, dict):
+            item_type = item.get("type")
+        elif hasattr(item, "type"):
+            item_type = item.type
+        else:
+            continue
+
+        # Anthropic format: {"type": "document", "source": {...}, "title": "..."}
+        if item_type == "document":
+            source = item.get("source", {}) if isinstance(item, dict) else getattr(item, "source", None)
+            title = item.get("title") if isinstance(item, dict) else getattr(item, "title", None)
+
+            if source is None:
+                continue
+
+            if isinstance(source, dict):
+                source_type = source.get("type")
+                if source_type == "base64":
+                    media_type = source.get("media_type", "application/pdf")
+                    data = source.get("data", "")
+                    if data:
+                        documents.append({
+                            "media_type": media_type,
+                            "data": data,
+                            "name": title or _default_document_name(media_type),
+                        })
+                elif source_type == "url":
+                    url = source.get("url", "")
+                    logger.warning(f"URL-based documents are not supported by Kiro API, skipping: {url[:80]}...")
+            elif hasattr(source, "type"):
+                if source.type == "base64":
+                    media_type = getattr(source, "media_type", "application/pdf")
+                    data = getattr(source, "data", "")
+                    if data:
+                        documents.append({
+                            "media_type": media_type,
+                            "data": data,
+                            "name": title or _default_document_name(media_type),
+                        })
+                elif source.type == "url":
+                    url = getattr(source, "url", "")
+                    logger.warning(f"URL-based documents are not supported by Kiro API, skipping: {url[:80]}...")
+
+        # OpenAI format: {"type": "file", "file": {"filename": "...", "file_data": "data:...;base64,..."}}
+        elif item_type == "file":
+            file_obj = item.get("file", {}) if isinstance(item, dict) else getattr(item, "file", {})
+
+            if isinstance(file_obj, dict):
+                filename = file_obj.get("filename")
+                file_data = file_obj.get("file_data", "")
+            else:
+                filename = getattr(file_obj, "filename", None)
+                file_data = getattr(file_obj, "file_data", "")
+
+            if not file_data:
+                continue
+
+            media_type = "application/pdf"
+            data = file_data
+            # Parse data URL: data:application/pdf;base64,JVBER...
+            if data.startswith("data:"):
+                try:
+                    header, actual_data = data.split(",", 1)
+                    media_part = header.split(";")[0]  # "data:application/pdf"
+                    extracted_media_type = media_part.replace("data:", "")
+                    if extracted_media_type:
+                        media_type = extracted_media_type
+                    data = actual_data
+                except (ValueError, IndexError) as e:
+                    logger.warning(f"Failed to parse file data URL: {e}")
+
+            if data:
+                documents.append({
+                    "media_type": media_type,
+                    "data": data,
+                    "name": filename or _default_document_name(media_type),
+                })
+
+    if documents:
+        logger.debug(f"Extracted {len(documents)} document(s) from content")
+
+    return documents
+
+
+def _default_document_name(media_type: str) -> str:
+    """Build a fallback document name from a media type (e.g. "application/pdf" -> "document.pdf")."""
+    ext = media_type.split("/")[-1] if "/" in media_type else media_type
+    return f"document.{ext}" if ext else "document"
 
 
 # ==================================================================================================
@@ -700,8 +828,73 @@ def convert_images_to_kiro_format(images: Optional[List[Dict[str, Any]]]) -> Lis
     
     if kiro_images:
         logger.debug(f"Converted {len(kiro_images)} image(s) to Kiro format")
-    
+
     return kiro_images
+
+
+def convert_documents_to_kiro_format(documents: Optional[List[Dict[str, Any]]]) -> List[Dict[str, Any]]:
+    """
+    Converts unified documents to Kiro API format.
+
+    Unified format: [{"media_type": "application/pdf", "data": "base64...", "name": "spec.pdf"}]
+    Kiro format:     [{"format": "pdf", "name": "spec.pdf", "source": {"bytes": "base64..."}}]
+
+    Mirrors convert_images_to_kiro_format: documents go directly into
+    userInputMessage.documents, matching the Bedrock-style document shape the
+    Kiro API expects. Also strips a data URL prefix if a client left one in the
+    data field.
+
+    Args:
+        documents: List of documents in unified format
+
+    Returns:
+        List of documents in Kiro format, ready for userInputMessage.documents
+
+    Example:
+        >>> convert_documents_to_kiro_format([{"media_type": "application/pdf", "data": "abc", "name": "a.pdf"}])
+        [{'format': 'pdf', 'name': 'a.pdf', 'source': {'bytes': 'abc'}}]
+    """
+    if not documents:
+        return []
+
+    kiro_documents = []
+    for doc in documents:
+        media_type = doc.get("media_type", "application/pdf")
+        data = doc.get("data", "")
+        name = doc.get("name") or _default_document_name(media_type)
+
+        if not data:
+            logger.warning("Skipping document with empty data")
+            continue
+
+        # Strip data URL prefix if present (some clients send "data:application/pdf;base64,..." in data field)
+        if data.startswith("data:"):
+            try:
+                header, actual_data = data.split(",", 1)
+                media_part = header.split(";")[0]  # "data:application/pdf"
+                extracted_media_type = media_part.replace("data:", "")
+                if extracted_media_type:
+                    media_type = extracted_media_type
+                data = actual_data
+                logger.debug(f"Stripped data URL prefix, extracted media_type: {media_type}")
+            except (ValueError, IndexError) as e:
+                logger.warning(f"Failed to parse data URL prefix: {e}")
+
+        # Extract format from media_type: "application/pdf" -> "pdf"
+        format_str = media_type.split("/")[-1] if "/" in media_type else media_type
+
+        kiro_documents.append({
+            "format": format_str,
+            "name": name,
+            "source": {
+                "bytes": data
+            }
+        })
+
+    if kiro_documents:
+        logger.debug(f"Converted {len(kiro_documents)} document(s) to Kiro format")
+
+    return kiro_documents
 
 
 # ==================================================================================================
@@ -974,7 +1167,8 @@ def strip_all_tool_content(messages: List[UnifiedMessage]) -> Tuple[List[Unified
                 content=content,
                 tool_calls=None,
                 tool_results=None,
-                images=msg.images
+                images=msg.images,
+                documents=msg.documents
             )
             result.append(cleaned_msg)
         else:
@@ -1057,7 +1251,8 @@ def ensure_assistant_before_tool_results(messages: List[UnifiedMessage]) -> Tupl
                     content=new_content,
                     tool_calls=msg.tool_calls,
                     tool_results=None,  # Remove orphaned tool_results (now in text)
-                    images=msg.images
+                    images=msg.images,
+                    documents=msg.documents
                 )
                 result.append(cleaned_msg)
                 converted_any_tool_results = True
@@ -1243,7 +1438,8 @@ def normalize_message_roles(messages: List[UnifiedMessage]) -> List[UnifiedMessa
                 content=msg.content,
                 tool_calls=msg.tool_calls,
                 tool_results=msg.tool_results,
-                images=msg.images
+                images=msg.images,
+                documents=msg.documents
             )
             normalized.append(normalized_msg)
             converted_count += 1
@@ -1358,7 +1554,14 @@ def build_kiro_history(messages: List[UnifiedMessage], model_id: str) -> List[Di
                 kiro_images = convert_images_to_kiro_format(images)
                 if kiro_images:
                     user_input["images"] = kiro_images
-            
+
+            # Process documents (e.g. PDFs) - same placement as images
+            documents = msg.documents or extract_documents_from_content(msg.content)
+            if documents:
+                kiro_documents = convert_documents_to_kiro_format(documents)
+                if kiro_documents:
+                    user_input["documents"] = kiro_documents
+
             # Build userInputMessageContext for tools and toolResults only
             user_input_context: Dict[str, Any] = {}
             
@@ -1525,7 +1728,15 @@ def build_kiro_payload(
         kiro_images = convert_images_to_kiro_format(images)
         if kiro_images:
             logger.debug(f"Added {len(kiro_images)} image(s) to current message")
-    
+
+    # Process documents (e.g. PDFs) in current message - same placement as images
+    documents = current_message.documents or extract_documents_from_content(current_message.content)
+    kiro_documents = None
+    if documents:
+        kiro_documents = convert_documents_to_kiro_format(documents)
+        if kiro_documents:
+            logger.debug(f"Added {len(kiro_documents)} document(s) to current message")
+
     # Build user_input_context for tools and toolResults only (NOT images)
     user_input_context: Dict[str, Any] = {}
     
@@ -1560,7 +1771,11 @@ def build_kiro_payload(
     # Add images directly to userInputMessage (NOT to userInputMessageContext)
     if kiro_images:
         user_input_message["images"] = kiro_images
-    
+
+    # Add documents directly to userInputMessage (same placement as images)
+    if kiro_documents:
+        user_input_message["documents"] = kiro_documents
+
     # Add user_input_context if present (contains tools and toolResults only)
     if user_input_context:
         user_input_message["userInputMessageContext"] = user_input_context

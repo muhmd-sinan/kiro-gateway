@@ -9,8 +9,10 @@ All tests MUST be completely isolated from the network.
 
 import asyncio
 import json
+import os
 import pytest
 import time
+from pathlib import Path
 from typing import AsyncGenerator, Dict, Any, List
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
 from datetime import datetime, timezone
@@ -86,20 +88,107 @@ def setup_test_environment(tmp_path_factory):
     import kiro.config
     original_creds_file = kiro.config.ACCOUNTS_CONFIG_FILE
     original_state_file = kiro.config.ACCOUNTS_STATE_FILE
-    
+
     kiro.config.ACCOUNTS_CONFIG_FILE = str(creds_file)
     kiro.config.ACCOUNTS_STATE_FILE = str(tmp_dir / "state.json")
-    
+
+    # Env vars too: anything that re-reads config (module reload, subprocess)
+    # must also land on the temporary files, never the operator's real ones.
+    os.environ["ACCOUNTS_CONFIG_FILE"] = str(creds_file)
+    os.environ["ACCOUNTS_STATE_FILE"] = str(tmp_dir / "state.json")
+
+    # Neutralize the legacy .env credential pointers. With ACCOUNT_SYSTEM=false
+    # main's lifespan REGENERATES credentials.json from these on every startup -
+    # so a developer whose .env names their real kiro-cli SQLite store would see
+    # the temporary credentials.json above overwritten with that real path, and
+    # the mocked refresh response written back over their live tokens.
+    import sys
+    LEGACY_CREDENTIAL_NAMES = ("REFRESH_TOKEN", "KIRO_CREDS_FILE", "KIRO_CLI_DB_FILE")
+    legacy_originals = {}
+    for name in LEGACY_CREDENTIAL_NAMES:
+        legacy_originals[("kiro.config", name)] = getattr(kiro.config, name, None)
+        setattr(kiro.config, name, None)
+        # main.py import-binds these names, so patching the config module alone
+        # is not enough once main is already in sys.modules (it is, by the time
+        # a session fixture runs - test modules import it during collection).
+        main_module = sys.modules.get("main")
+        if main_module is not None and hasattr(main_module, name):
+            legacy_originals[("main", name)] = getattr(main_module, name)
+            setattr(main_module, name, None)
+
     print(f"✅ Test credentials: {creds_file}")
     print(f"✅ Test state: {tmp_dir / 'state.json'}")
-    
+
     yield
-    
+
     # Restore original paths
     kiro.config.ACCOUNTS_CONFIG_FILE = original_creds_file
     kiro.config.ACCOUNTS_STATE_FILE = original_state_file
-    
+    for (module_name, attr), value in legacy_originals.items():
+        module = kiro.config if module_name == "kiro.config" else sys.modules.get(module_name)
+        if module is not None:
+            setattr(module, attr, value)
+    for var in ("ACCOUNTS_CONFIG_FILE", "ACCOUNTS_STATE_FILE"):
+        os.environ.pop(var, None)
+
     print("🧹 Test environment cleaned up")
+
+
+# Real credential stores kiro-cli / Kiro IDE write to. A test must NEVER open
+# one: the mocked refresh response would be persisted straight over the
+# operator's live tokens, destroying their login.
+REAL_CREDENTIAL_STORES = (
+    Path.home() / ".local" / "share" / "kiro-cli",
+    Path.home() / ".local" / "share" / "amazon-q",
+    Path.home() / "AppData" / "Local" / "Kiro-Cli",
+    Path.home() / "AppData" / "Local" / "Amazon-Q",
+    Path.home() / ".aws" / "sso" / "cache",
+)
+
+
+def _is_real_credential_store(path_value: str) -> bool:
+    """True if path_value points inside a live kiro-cli / SSO credential store."""
+    try:
+        candidate = Path(path_value).expanduser().resolve()
+    except (OSError, ValueError):
+        return False
+
+    for store in REAL_CREDENTIAL_STORES:
+        try:
+            candidate.relative_to(store.resolve())
+            return True
+        except (ValueError, OSError):
+            continue
+    return False
+
+
+@pytest.fixture(scope="session", autouse=True)
+def block_real_credential_stores():
+    """
+    CRITICAL FIXTURE: Fails any test that points KiroAuthManager at a real
+    credential store.
+
+    Guards the whole load/refresh/write-back path at its single entry point -
+    without a manager instance nothing can be read from or written to a store.
+    """
+    from kiro.auth import KiroAuthManager
+
+    original_init = KiroAuthManager.__init__
+
+    def guarded_init(self, *args, **kwargs):
+        for field in ("creds_file", "sqlite_db"):
+            value = kwargs.get(field)
+            if value and _is_real_credential_store(value):
+                raise AssertionError(
+                    f"Test tried to open a REAL credential store via {field}={value!r}. "
+                    "Tests must use tmp_path fixtures - writing a mocked token "
+                    "response here would destroy the operator's kiro-cli login."
+                )
+        return original_init(self, *args, **kwargs)
+
+    KiroAuthManager.__init__ = guarded_init
+    yield
+    KiroAuthManager.__init__ = original_init
 
 
 @pytest.fixture

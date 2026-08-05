@@ -3235,7 +3235,7 @@ class TestKiroAuthManagerSqliteWriteBackPreservation:
         conn.close()
         
         print("Setup: Enabling SQLITE_READONLY flag...")
-        monkeypatch.setattr('kiro.auth.SQLITE_READONLY', True)
+        monkeypatch.setattr('kiro.config.SQLITE_READONLY', True)
         
         print("Setup: Creating KiroAuthManager...")
         manager = KiroAuthManager(sqlite_db=str(db_file))

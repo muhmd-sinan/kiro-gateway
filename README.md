@@ -99,11 +99,11 @@ cp .env.example .env
 # Start the server
 python main.py
 
-# Or with custom port (if 8000 is busy)
+# Or with custom port (if 8787 is busy)
 python main.py --port 9000
 ```
 
-The server will be available at `http://localhost:8000`
+The server will be available at `http://localhost:8787`
 
 ---
 
@@ -341,6 +341,89 @@ For complete configuration examples (including per-account region settings), see
 
 ---
 
+## 🖥️ Claude Desktop (Third-Party Inference)
+
+Recent Claude Desktop builds ship a **Configure third-party inference** panel
+(under `Developer` -> `Model configuration`) where you can point the app at a
+custom inference gateway. Kiro Gateway works out of the box:
+
+| Field | Value |
+| --- | --- |
+| Gateway base URL | `http://localhost:8787` (or your `SERVER_HOST` / `SERVER_PORT`) |
+| Gateway API key | Your `PROXY_API_KEY` from `.env` |
+| Gateway auth scheme | `x-api-key` (or `Authorization: Bearer` - both work) |
+| Credential kind | `Static API key` |
+
+Hit **Test connection** - you should see two green checks (`Model discovery`
+and `Inference`). The gateway advertises models in a hybrid envelope that
+includes Anthropic's `type`, `display_name`, `created_at`, and `has_more`
+fields alongside the OpenAI-shaped payload, so the model dropdown populates
+automatically.
+
+Long-running requests (extended thinking, big tool loops) are kept alive with
+`event: ping` SSE keepalives every ~15 seconds, matching Anthropic's own
+streaming behavior - Claude Desktop won't disconnect mid-generation.
+
+### Getting all models to appear in the picker (dash-form aliases)
+
+Claude Desktop's in-chat model picker whitelists Anthropic-canonical dash-form
+ids (`claude-opus-4-8`, `claude-sonnet-4-6`). The gateway automatically emits
+those aliases alongside the Kiro-native dot form (`claude-opus-4.8`,
+`claude-sonnet-4.6`) so all Claude-family entries light up as selectable
+instead of being marked *Unavailable*. No configuration needed - both forms
+route to the same Kiro model.
+
+### Enabling 1M-context on individual models
+
+Kiro serves Sonnet 4.6, Opus 4.6, Opus 4.7, Opus 4.8, and Sonnet 5 with a **1
+million-token** context window. Claude Desktop, however, treats the 1M window
+as an opt-in feature per model - the default in its UI is 200k. To turn it on:
+
+1. Open the **Configure third-party inference** panel.
+2. Scroll past the base URL / API key section to **Models**.
+3. Click **+ Add model** and enter the dash-form id (for example
+   `claude-opus-4-8`, `claude-sonnet-4-6`, or `claude-sonnet-5`).
+4. Enable the **1M context** toggle next to that model.
+5. Save. The model will now use the full 1M window on subsequent requests.
+
+The gateway already advertises the correct `contextWindowTokens` per model on
+`GET /v1/models`, so the toggle merely tells Claude Desktop to trust that
+larger window when composing requests.
+
+### Using GPT-5.6 in Claude Desktop (disguise aliases)
+
+Kiro also exposes OpenAI's preview trio `gpt-5.6-sol`, `gpt-5.6-terra`, and
+`gpt-5.6-luna`, but Claude Desktop's model picker hard-filters ids to Claude
+family names and marks anything with a dot in the version segment as
+*Unavailable*. To keep them reachable, the gateway advertises each under a
+Claude-shaped alias so the picker whitelists them:
+
+| Kiro model | Claude Desktop id (dot form) | Companion (dash form) |
+| --- | --- | --- |
+| `gpt-5.6-sol` | `claude-sol-5.6` | `claude-sol-5-6` |
+| `gpt-5.6-terra` | `claude-terra-5.6` | `claude-terra-5-6` |
+| `gpt-5.6-luna` | `claude-luna-5.6` | `claude-luna-5-6` |
+
+Both forms route to the same underlying Kiro model - the dash companion is a
+safety net in case a Claude Desktop build enforces the "no dots" rule strictly.
+Add either id in the **Configure third-party inference** panel, or pick from
+the model dropdown.
+
+The context window for these models is **272k tokens** regardless of Claude
+Desktop's 1M-context toggle. Leave the toggle off for these chats - if a
+request overflows the 272k ceiling, Kiro will reject it and the gateway will
+surface the error verbatim.
+
+The mapping lives in `MODEL_ALIASES` inside [`kiro/config.py`](kiro/config.py).
+Add, rename, or remove entries there and restart the gateway to reshape the
+list.
+
+Windows users can grab convenience scripts under [`windows/`](windows/README.md):
+one-click `Claude with Kiro.cmd` starts the gateway (if needed) and launches
+Claude Desktop in a single action.
+
+---
+
 ## 🐳 Docker Deployment
 
 > **Docker-based deployment.** Prefer native Python? See [Quick Start](#-quick-start) above.
@@ -359,7 +442,7 @@ docker-compose up -d
 
 # 3. Check status
 docker-compose logs -f
-curl http://localhost:8000/health
+curl http://localhost:8787/health
 ```
 
 ### Docker Run (Without Compose)
@@ -369,7 +452,7 @@ curl http://localhost:8000/health
 
 ```bash
 docker run -d \
-  -p 8000:8000 \
+  -p 8787:8787 \
   -e PROXY_API_KEY="my-super-secret-password-123" \
   -e REFRESH_TOKEN="your_refresh_token" \
   --name kiro-gateway \
@@ -384,7 +467,7 @@ docker run -d \
 **Linux/macOS:**
 ```bash
 docker run -d \
-  -p 8000:8000 \
+  -p 8787:8787 \
   -v ~/.aws/sso/cache:/home/kiro/.aws/sso/cache:ro \
   -e KIRO_CREDS_FILE=/home/kiro/.aws/sso/cache/kiro-auth-token.json \
   -e PROXY_API_KEY="my-super-secret-password-123" \
@@ -395,7 +478,7 @@ docker run -d \
 **Windows (PowerShell):**
 ```powershell
 docker run -d `
-  -p 8000:8000 `
+  -p 8787:8787 `
   -v ${HOME}/.aws/sso/cache:/home/kiro/.aws/sso/cache:ro `
   -e KIRO_CREDS_FILE=/home/kiro/.aws/sso/cache/kiro-auth-token.json `
   -e PROXY_API_KEY="my-super-secret-password-123" `
@@ -409,7 +492,7 @@ docker run -d `
 <summary>🔹 Using .env File</summary>
 
 ```bash
-docker run -d -p 8000:8000 --env-file .env --name kiro-gateway ghcr.io/jwadow/kiro-gateway:latest
+docker run -d -p 8787:8787 --env-file .env --name kiro-gateway ghcr.io/jwadow/kiro-gateway:latest
 ```
 
 </details>
@@ -446,7 +529,7 @@ docker-compose pull && docker-compose up -d  # Update
 
 ```bash
 docker build -t kiro-gateway .
-docker run -d -p 8000:8000 --env-file .env kiro-gateway
+docker run -d -p 8787:8787 --env-file .env kiro-gateway
 ```
 
 </details>
@@ -528,7 +611,7 @@ Leave `VPN_PROXY_URL` empty (default) if you don't need proxy support.
 <summary>🔹 Simple cURL Request</summary>
 
 ```bash
-curl http://localhost:8000/v1/chat/completions \
+curl http://localhost:8787/v1/chat/completions \
   -H "Authorization: Bearer my-super-secret-password-123" \
   -H "Content-Type: application/json" \
   -d '{
@@ -546,7 +629,7 @@ curl http://localhost:8000/v1/chat/completions \
 <summary>🔹 Streaming Request</summary>
 
 ```bash
-curl http://localhost:8000/v1/chat/completions \
+curl http://localhost:8787/v1/chat/completions \
   -H "Authorization: Bearer my-super-secret-password-123" \
   -H "Content-Type: application/json" \
   -d '{
@@ -565,7 +648,7 @@ curl http://localhost:8000/v1/chat/completions \
 <summary>🛠️ With Tool Calling</summary>
 
 ```bash
-curl http://localhost:8000/v1/chat/completions \
+curl http://localhost:8787/v1/chat/completions \
   -H "Authorization: Bearer my-super-secret-password-123" \
   -H "Content-Type: application/json" \
   -d '{
@@ -597,7 +680,7 @@ curl http://localhost:8000/v1/chat/completions \
 from openai import OpenAI
 
 client = OpenAI(
-    base_url="http://localhost:8000/v1",
+    base_url="http://localhost:8787/v1",
     api_key="my-super-secret-password-123"  # Your PROXY_API_KEY from .env
 )
 
@@ -624,7 +707,7 @@ for chunk in response:
 from langchain_openai import ChatOpenAI
 
 llm = ChatOpenAI(
-    base_url="http://localhost:8000/v1",
+    base_url="http://localhost:8787/v1",
     api_key="my-super-secret-password-123",  # Your PROXY_API_KEY from .env
     model="claude-sonnet-4-5"
 )
@@ -641,7 +724,7 @@ print(response.content)
 <summary>🔹 Simple cURL Request</summary>
 
 ```bash
-curl http://localhost:8000/v1/messages \
+curl http://localhost:8787/v1/messages \
   -H "x-api-key: my-super-secret-password-123" \
   -H "anthropic-version: 2023-06-01" \
   -H "Content-Type: application/json" \
@@ -660,7 +743,7 @@ curl http://localhost:8000/v1/messages \
 <summary>🔹 With System Prompt</summary>
 
 ```bash
-curl http://localhost:8000/v1/messages \
+curl http://localhost:8787/v1/messages \
   -H "x-api-key: my-super-secret-password-123" \
   -H "anthropic-version: 2023-06-01" \
   -H "Content-Type: application/json" \
@@ -680,7 +763,7 @@ curl http://localhost:8000/v1/messages \
 <summary>📡 Streaming</summary>
 
 ```bash
-curl http://localhost:8000/v1/messages \
+curl http://localhost:8787/v1/messages \
   -H "x-api-key: my-super-secret-password-123" \
   -H "anthropic-version: 2023-06-01" \
   -H "Content-Type: application/json" \
@@ -702,7 +785,7 @@ import anthropic
 
 client = anthropic.Anthropic(
     api_key="my-super-secret-password-123",  # Your PROXY_API_KEY from .env
-    base_url="http://localhost:8000"
+    base_url="http://localhost:8787"
 )
 
 # Non-streaming
@@ -855,6 +938,45 @@ Every contribution helps keep this project alive and growing
 | **TON** | TON | `UQBVh8T1H3GI7gd7b-_PPNnxHYYxptrcCVf3qQk5v41h3QTM` |
 
 </div>
+
+---
+
+## 🧪 Fork notes
+
+This fork adds a handful of improvements on top of upstream v2.3:
+
+- **Claude Desktop third-party inference** - extended the `/v1/models` envelope
+  with Anthropic-shape fields (`type`, `display_name`, `created_at`,
+  `has_more`) so Claude Desktop's model dropdown populates. Same endpoint
+  still serves OpenAI clients.
+- **Anthropic `GET /v1/models/{id}`** - added the missing retrieve route.
+- **SSE `event: ping` keepalives** - Anthropic streams now emit `ping` events
+  every ~15s of upstream silence, preventing Claude Desktop / proxies from
+  killing long thinking or tool loops.
+- **`input_tokens` in `message_delta.usage`** - matches the current Anthropic
+  streaming spec.
+- **Refreshed model catalog** - synced with `kiro-cli chat --list-models`
+  (Kiro CLI 2.11.1): added Claude Sonnet 5, Claude Opus 4.8, and the
+  GPT-5.6 (`sol`/`terra`/`luna`) previews. Dropped imaginary `-1m` variants -
+  Kiro exposes 1M-context on the base id directly.
+- **Dash-form Claude aliases** - `/v1/models` emits both `claude-opus-4.8`
+  (Kiro-native) and `claude-opus-4-8` (Anthropic-canonical), so all
+  Claude-family models light up in Claude Desktop's picker.
+- **`role: "system"` folding** - Claude Desktop sends `system` in the
+  messages array; the gateway folds it into the top-level `system` field
+  and lets Pydantic keep the schema clean.
+- **Correct `contextWindowTokens` per model** - `/v1/models` now advertises
+  the real 1M context for Sonnet 4.6 / Opus 4.6+ / Sonnet 5.
+- **Constant-time API key comparison** on both routers.
+- **Loopback-by-default bind** - `SERVER_HOST` defaults to `127.0.0.1`; set
+  `0.0.0.0` explicitly for LAN / Docker exposure.
+- **Windows helper scripts** under [`windows/`](windows/README.md): start /
+  stop / status / ping, a Claude Desktop launcher, Task Scheduler auto-start,
+  and a shortcut generator.
+- **Default port `8787`** - gateway-wide default (less contested than `8000`),
+  matching the `windows/` helper scripts.
+
+Full changelog in the PR body.
 
 ---
 

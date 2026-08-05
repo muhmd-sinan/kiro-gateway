@@ -41,6 +41,7 @@ from kiro.models_openai import ChatMessage, ChatCompletionRequest, Tool
 from kiro.converters_core import (
     extract_text_content,
     extract_images_from_content,
+    extract_documents_from_content,
     UnifiedMessage,
     UnifiedTool,
     ThinkingConfig,
@@ -172,6 +173,7 @@ def convert_openai_messages_to_unified(messages: List[ChatMessage]) -> Tuple[str
     total_tool_calls = 0
     total_tool_results = 0
     total_images = 0
+    total_documents = 0
 
     for msg in non_system_messages:
         if msg.role == "tool":
@@ -206,6 +208,7 @@ def convert_openai_messages_to_unified(messages: List[ChatMessage]) -> Tuple[str
             tool_calls = None
             tool_results = None
             images = None
+            documents = None
 
             if msg.role == "assistant":
                 tool_calls = _extract_tool_calls_from_openai(msg) or None
@@ -219,13 +222,18 @@ def convert_openai_messages_to_unified(messages: List[ChatMessage]) -> Tuple[str
                 images = extract_images_from_content(msg.content) or None
                 if images:
                     total_images += len(images)
+                # Extract documents (e.g. PDFs) from user messages
+                documents = extract_documents_from_content(msg.content) or None
+                if documents:
+                    total_documents += len(documents)
 
             unified_msg = UnifiedMessage(
                 role=msg.role,
                 content=extract_text_content(msg.content),
                 tool_calls=tool_calls,
                 tool_results=tool_results,
-                images=images
+                images=images,
+                documents=documents
             )
             processed.append(unified_msg)
     
@@ -239,13 +247,14 @@ def convert_openai_messages_to_unified(messages: List[ChatMessage]) -> Tuple[str
         )
         processed.append(unified_msg)
     
-    # Log summary if any tool content or images were found
-    if total_tool_calls > 0 or total_tool_results > 0 or total_images > 0:
+    # Log summary if any tool content, images or documents were found
+    if total_tool_calls > 0 or total_tool_results > 0 or total_images > 0 or total_documents > 0:
         logger.debug(
             f"Converted {len(messages)} OpenAI messages: "
-            f"{total_tool_calls} tool_calls, {total_tool_results} tool_results, {total_images} images"
+            f"{total_tool_calls} tool_calls, {total_tool_results} tool_results, "
+            f"{total_images} images, {total_documents} documents"
         )
-    
+
     return system_prompt, processed
 
 

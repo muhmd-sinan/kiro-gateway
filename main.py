@@ -23,7 +23,7 @@ Kiro Gateway - OpenAI-compatible interface for Kiro API.
 Application entry point. Creates FastAPI app and connects routes.
 
 Usage:
-    # Using default settings (host: 0.0.0.0, port: 8000)
+    # Using default settings (host: 0.0.0.0, port: 8787)
     python main.py
     
     # With CLI arguments (highest priority)
@@ -34,7 +34,7 @@ Usage:
     SERVER_PORT=9000 python main.py
     
     # Using uvicorn directly (uvicorn handles its own CLI args)
-    uvicorn main:app --host 0.0.0.0 --port 8000
+    uvicorn main:app --host 0.0.0.0 --port 8787
 
 Priority: CLI args > Environment variables > Default values
 """
@@ -358,7 +358,17 @@ async def lifespan(app: FastAPI):
     # ==============================================================================
     # Legacy Fallback: .env → credentials.json
     # ==============================================================================
-    creds_path = Path(ACCOUNTS_CONFIG_FILE)
+    # Resolve the account file paths from the config MODULE, not from the names
+    # imported at module load. Tests (and anything that rewrites the paths after
+    # import) patch kiro.config attributes; a module-level `from ... import`
+    # binding would ignore that patch and make the lifespan read the operator's
+    # real credentials.json - which then gets a mocked token written back over
+    # the real kiro-cli SQLite database.
+    from kiro import config as kiro_config
+    accounts_config_file = kiro_config.ACCOUNTS_CONFIG_FILE
+    accounts_state_file = kiro_config.ACCOUNTS_STATE_FILE
+
+    creds_path = Path(accounts_config_file)
     
     # Check if we have legacy .env credentials
     has_refresh_token = bool(REFRESH_TOKEN)
@@ -454,8 +464,8 @@ async def lifespan(app: FastAPI):
     # Create AccountManager
     # ==============================================================================
     app.state.account_manager = AccountManager(
-        credentials_file=ACCOUNTS_CONFIG_FILE,
-        state_file=ACCOUNTS_STATE_FILE
+        credentials_file=accounts_config_file,
+        state_file=accounts_state_file
     )
     
     # Load credentials and state
@@ -608,7 +618,7 @@ def parse_cli_args() -> argparse.Namespace:
 Configuration Priority (highest to lowest):
   1. CLI arguments (--host, --port)
   2. Environment variables (SERVER_HOST, SERVER_PORT)
-  3. Default values (0.0.0.0:8000)
+  3. Default values (0.0.0.0:8787)
 
 Examples:
   python main.py                          # Use defaults or env vars
@@ -653,7 +663,7 @@ def resolve_server_config(args: argparse.Namespace) -> tuple[str, int]:
     Priority (highest to lowest):
     1. CLI arguments (--host, --port)
     2. Environment variables (SERVER_HOST, SERVER_PORT)
-    3. Default values (0.0.0.0:8000)
+    3. Default values (0.0.0.0:8787)
     
     Args:
         args: Parsed CLI arguments
@@ -693,10 +703,15 @@ def resolve_server_config(args: argparse.Namespace) -> tuple[str, int]:
 def print_startup_banner(host: str, port: int) -> None:
     """
     Print a startup banner with server information.
-    
+
     Args:
         host: Server host address
         port: Server port
+
+    Note:
+        Reconfigures stdout to UTF-8 with ``errors="replace"`` on Windows so the
+        banner never dies with UnicodeEncodeError when the parent process (e.g.
+        a redirected file or a legacy cp1252 console) can't render the emoji.
     """
     # ANSI color codes
     GREEN = "\033[92m"
@@ -706,25 +721,39 @@ def print_startup_banner(host: str, port: int) -> None:
     BOLD = "\033[1m"
     DIM = "\033[2m"
     RESET = "\033[0m"
-    
+
+    # Force UTF-8 stdout with replacement so we never die on cp1252 consoles or
+    # redirected pipes. Best-effort - some stream types don't support reconfigure.
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+
     # Determine display URL
     display_host = "localhost" if host == "0.0.0.0" else host
     url = f"http://{display_host}:{port}"
-    
-    print()
-    print(f"  {WHITE}{BOLD}👻 {APP_TITLE} v{APP_VERSION}{RESET}")
-    print()
-    print(f"  {WHITE}Server running at:{RESET}")
-    print(f"  {GREEN}{BOLD}➜  {url}{RESET}")
-    print()
-    print(f"  {DIM}API Docs:      {url}/docs{RESET}")
-    print(f"  {DIM}Health Check:  {url}/health{RESET}")
-    print()
-    print(f"  {DIM}{'─' * 48}{RESET}")
-    print(f"  {WHITE}💬 Found a bug? Need help? Have questions?{RESET}")
-    print(f"  {YELLOW}➜  https://github.com/jwadow/kiro-gateway/issues{RESET}")
-    print(f"  {DIM}{'─' * 48}{RESET}")
-    print()
+
+    lines = [
+        "",
+        f"  {WHITE}{BOLD}Kiro Gateway v{APP_VERSION}{RESET}",
+        "",
+        f"  {WHITE}Server running at:{RESET}",
+        f"  {GREEN}{BOLD}-> {url}{RESET}",
+        "",
+        f"  {DIM}API Docs:      {url}/docs{RESET}",
+        f"  {DIM}Health Check:  {url}/health{RESET}",
+        "",
+        f"  {DIM}{'-' * 48}{RESET}",
+        f"  {WHITE}Found a bug? Need help? Have questions?{RESET}",
+        f"  {YELLOW}-> https://github.com/jwadow/kiro-gateway/issues{RESET}",
+        f"  {DIM}{'-' * 48}{RESET}",
+        "",
+    ]
+    for line in lines:
+        try:
+            print(line)
+        except UnicodeEncodeError:
+            print(line.encode("ascii", "replace").decode("ascii"))
 
 
 # --- Entry Point ---

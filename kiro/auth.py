@@ -42,7 +42,6 @@ from loguru import logger
 
 from kiro.config import (
     TOKEN_REFRESH_THRESHOLD,
-    SQLITE_READONLY,
     get_kiro_refresh_url,
     get_kiro_api_host,
     get_kiro_q_host,
@@ -538,9 +537,11 @@ class KiroAuthManager:
         """
         if not self._sqlite_db:
             return
-        
-        # Check read-only mode
-        if SQLITE_READONLY:
+
+        # Read the flag off the config module (not the import-time copy) so that
+        # tests and runtime overrides can disable write-back for real.
+        from kiro import config as kiro_config
+        if kiro_config.SQLITE_READONLY:
             logger.debug("SQLite write-back disabled (SQLITE_READONLY=true)")
             return
         

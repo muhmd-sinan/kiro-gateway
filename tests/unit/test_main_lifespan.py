@@ -58,8 +58,8 @@ class TestLifespanLegacyFallback:
         print(f"Created old credentials.json: {old_creds}")
         
         # Mock config paths
-        monkeypatch.setattr("main.ACCOUNTS_CONFIG_FILE", str(creds_file))
-        monkeypatch.setattr("main.ACCOUNTS_STATE_FILE", str(state_file))
+        monkeypatch.setattr("kiro.config.ACCOUNTS_CONFIG_FILE", str(creds_file))
+        monkeypatch.setattr("kiro.config.ACCOUNTS_STATE_FILE", str(state_file))
         
         # Mock AccountManager to prevent actual initialization
         mock_manager = AsyncMock()
@@ -110,8 +110,8 @@ class TestLifespanLegacyFallback:
         state_file = tmp_path / "state.json"
         
         # First run: no credentials.json
-        monkeypatch.setattr("main.ACCOUNTS_CONFIG_FILE", str(creds_file))
-        monkeypatch.setattr("main.ACCOUNTS_STATE_FILE", str(state_file))
+        monkeypatch.setattr("kiro.config.ACCOUNTS_CONFIG_FILE", str(creds_file))
+        monkeypatch.setattr("kiro.config.ACCOUNTS_STATE_FILE", str(state_file))
         
         mock_manager = AsyncMock()
         mock_manager._accounts = {"test": MagicMock()}
@@ -193,8 +193,8 @@ class TestLifespanLegacyFallback:
         creds_file = tmp_path / "credentials.json"
         state_file = tmp_path / "state.json"
         
-        monkeypatch.setattr("main.ACCOUNTS_CONFIG_FILE", str(creds_file))
-        monkeypatch.setattr("main.ACCOUNTS_STATE_FILE", str(state_file))
+        monkeypatch.setattr("kiro.config.ACCOUNTS_CONFIG_FILE", str(creds_file))
+        monkeypatch.setattr("kiro.config.ACCOUNTS_STATE_FILE", str(state_file))
         
         mock_manager = AsyncMock()
         mock_manager._accounts = {"test": MagicMock()}
@@ -246,8 +246,8 @@ class TestLifespanLegacyFallback:
         creds_file = tmp_path / "credentials.json"
         state_file = tmp_path / "state.json"
         
-        monkeypatch.setattr("main.ACCOUNTS_CONFIG_FILE", str(creds_file))
-        monkeypatch.setattr("main.ACCOUNTS_STATE_FILE", str(state_file))
+        monkeypatch.setattr("kiro.config.ACCOUNTS_CONFIG_FILE", str(creds_file))
+        monkeypatch.setattr("kiro.config.ACCOUNTS_STATE_FILE", str(state_file))
         
         mock_manager = AsyncMock()
         mock_manager._accounts = {"test": MagicMock()}
@@ -299,8 +299,8 @@ class TestLifespanLegacyFallback:
         creds_file.write_text(json.dumps(existing_creds))
         print(f"Pre-existing credentials.json: {existing_creds}")
         
-        monkeypatch.setattr("main.ACCOUNTS_CONFIG_FILE", str(creds_file))
-        monkeypatch.setattr("main.ACCOUNTS_STATE_FILE", str(state_file))
+        monkeypatch.setattr("kiro.config.ACCOUNTS_CONFIG_FILE", str(creds_file))
+        monkeypatch.setattr("kiro.config.ACCOUNTS_STATE_FILE", str(state_file))
         
         mock_manager = AsyncMock()
         mock_manager._accounts = {"test": MagicMock()}
@@ -358,8 +358,8 @@ class TestLifespanAccountManagerInit:
         creds_file = tmp_path / "credentials.json"
         state_file = tmp_path / "state.json"
         
-        monkeypatch.setattr("main.ACCOUNTS_CONFIG_FILE", str(creds_file))
-        monkeypatch.setattr("main.ACCOUNTS_STATE_FILE", str(state_file))
+        monkeypatch.setattr("kiro.config.ACCOUNTS_CONFIG_FILE", str(creds_file))
+        monkeypatch.setattr("kiro.config.ACCOUNTS_STATE_FILE", str(state_file))
         
         # Track AccountManager creation
         manager_created_with = {}
@@ -421,8 +421,8 @@ class TestLifespanAccountManagerInit:
         creds_file = tmp_path / "credentials.json"
         state_file = tmp_path / "state.json"
         
-        monkeypatch.setattr("main.ACCOUNTS_CONFIG_FILE", str(creds_file))
-        monkeypatch.setattr("main.ACCOUNTS_STATE_FILE", str(state_file))
+        monkeypatch.setattr("kiro.config.ACCOUNTS_CONFIG_FILE", str(creds_file))
+        monkeypatch.setattr("kiro.config.ACCOUNTS_STATE_FILE", str(state_file))
         
         load_calls = {"credentials": False, "state": False}
         
@@ -477,8 +477,8 @@ class TestLifespanAccountManagerInit:
         creds_file = tmp_path / "credentials.json"
         state_file = tmp_path / "state.json"
         
-        monkeypatch.setattr("main.ACCOUNTS_CONFIG_FILE", str(creds_file))
-        monkeypatch.setattr("main.ACCOUNTS_STATE_FILE", str(state_file))
+        monkeypatch.setattr("kiro.config.ACCOUNTS_CONFIG_FILE", str(creds_file))
+        monkeypatch.setattr("kiro.config.ACCOUNTS_STATE_FILE", str(state_file))
         
         mock_manager = AsyncMock()
         mock_manager._accounts = {"test": MagicMock()}
@@ -519,8 +519,8 @@ class TestLifespanAccountManagerInit:
         creds_file = tmp_path / "credentials.json"
         state_file = tmp_path / "state.json"
         
-        monkeypatch.setattr("main.ACCOUNTS_CONFIG_FILE", str(creds_file))
-        monkeypatch.setattr("main.ACCOUNTS_STATE_FILE", str(state_file))
+        monkeypatch.setattr("kiro.config.ACCOUNTS_CONFIG_FILE", str(creds_file))
+        monkeypatch.setattr("kiro.config.ACCOUNTS_STATE_FILE", str(state_file))
         
         initialized_accounts = []
         
@@ -574,8 +574,8 @@ class TestLifespanAccountManagerInit:
         creds_file = tmp_path / "credentials.json"
         state_file = tmp_path / "state.json"
         
-        monkeypatch.setattr("main.ACCOUNTS_CONFIG_FILE", str(creds_file))
-        monkeypatch.setattr("main.ACCOUNTS_STATE_FILE", str(state_file))
+        monkeypatch.setattr("kiro.config.ACCOUNTS_CONFIG_FILE", str(creds_file))
+        monkeypatch.setattr("kiro.config.ACCOUNTS_STATE_FILE", str(state_file))
         
         initialized_attempts = []
         
@@ -632,8 +632,8 @@ class TestLifespanAccountManagerInit:
         creds_file = tmp_path / "credentials.json"
         state_file = tmp_path / "state.json"
         
-        monkeypatch.setattr("main.ACCOUNTS_CONFIG_FILE", str(creds_file))
-        monkeypatch.setattr("main.ACCOUNTS_STATE_FILE", str(state_file))
+        monkeypatch.setattr("kiro.config.ACCOUNTS_CONFIG_FILE", str(creds_file))
+        monkeypatch.setattr("kiro.config.ACCOUNTS_STATE_FILE", str(state_file))
         
         mock_manager = AsyncMock()
         mock_manager._accounts = {}  # Empty accounts dict
@@ -672,8 +672,8 @@ class TestLifespanAccountManagerInit:
         creds_file = tmp_path / "credentials.json"
         state_file = tmp_path / "state.json"
         
-        monkeypatch.setattr("main.ACCOUNTS_CONFIG_FILE", str(creds_file))
-        monkeypatch.setattr("main.ACCOUNTS_STATE_FILE", str(state_file))
+        monkeypatch.setattr("kiro.config.ACCOUNTS_CONFIG_FILE", str(creds_file))
+        monkeypatch.setattr("kiro.config.ACCOUNTS_STATE_FILE", str(state_file))
         
         mock_manager = AsyncMock()
         mock_manager._accounts = {
@@ -716,8 +716,8 @@ class TestLifespanAccountManagerInit:
         creds_file = tmp_path / "credentials.json"
         state_file = tmp_path / "state.json"
         
-        monkeypatch.setattr("main.ACCOUNTS_CONFIG_FILE", str(creds_file))
-        monkeypatch.setattr("main.ACCOUNTS_STATE_FILE", str(state_file))
+        monkeypatch.setattr("kiro.config.ACCOUNTS_CONFIG_FILE", str(creds_file))
+        monkeypatch.setattr("kiro.config.ACCOUNTS_STATE_FILE", str(state_file))
         
         save_state_called = False
         
@@ -767,8 +767,8 @@ class TestLifespanAccountManagerInit:
         creds_file = tmp_path / "credentials.json"
         state_file = tmp_path / "state.json"
         
-        monkeypatch.setattr("main.ACCOUNTS_CONFIG_FILE", str(creds_file))
-        monkeypatch.setattr("main.ACCOUNTS_STATE_FILE", str(state_file))
+        monkeypatch.setattr("kiro.config.ACCOUNTS_CONFIG_FILE", str(creds_file))
+        monkeypatch.setattr("kiro.config.ACCOUNTS_STATE_FILE", str(state_file))
         
         periodic_task_started = False
         
@@ -817,8 +817,8 @@ class TestLifespanAccountManagerInit:
         creds_file = tmp_path / "credentials.json"
         state_file = tmp_path / "state.json"
         
-        monkeypatch.setattr("main.ACCOUNTS_CONFIG_FILE", str(creds_file))
-        monkeypatch.setattr("main.ACCOUNTS_STATE_FILE", str(state_file))
+        monkeypatch.setattr("kiro.config.ACCOUNTS_CONFIG_FILE", str(creds_file))
+        monkeypatch.setattr("kiro.config.ACCOUNTS_STATE_FILE", str(state_file))
         
         task_cancelled = False
         
@@ -875,8 +875,8 @@ class TestLifespanAccountManagerInit:
         creds_file = tmp_path / "credentials.json"
         state_file = tmp_path / "state.json"
         
-        monkeypatch.setattr("main.ACCOUNTS_CONFIG_FILE", str(creds_file))
-        monkeypatch.setattr("main.ACCOUNTS_STATE_FILE", str(state_file))
+        monkeypatch.setattr("kiro.config.ACCOUNTS_CONFIG_FILE", str(creds_file))
+        monkeypatch.setattr("kiro.config.ACCOUNTS_STATE_FILE", str(state_file))
         
         save_calls = []
         

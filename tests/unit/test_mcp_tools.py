@@ -523,7 +523,11 @@ class TestAnthropicSSEEmulation:
     async def test_generate_anthropic_sse_structure(self):
         """
         What it does: Verifies Anthropic SSE event structure.
-        Purpose: Ensure all 11 events are generated correctly.
+        Purpose: Ensure the 8-event tool_use flow is generated correctly.
+                 The generator deliberately omits a text content block - the
+                 model composes its own prose in the follow-up turn - so the
+                 stream is message_start, server_tool_use start/delta/stop,
+                 tool_result start/stop, message_delta, message_stop.
         """
         print("Setup: Preparing test data...")
         model = "claude-sonnet-4"
@@ -534,29 +538,33 @@ class TestAnthropicSSEEmulation:
             "totalResults": 1
         }
         input_tokens = 100
-        
+
         print("Action: Generating SSE stream...")
         events = []
         async for event in generate_anthropic_web_search_sse(model, query, tool_use_id, results, input_tokens):
             events.append(event)
-        
+
         print(f"Comparing event count: Got {len(events)} events")
-        assert len(events) >= 11  # At least 11 events (may have more text_delta chunks)
-        
+        assert len(events) == 8
+
         print("Checking event types...")
         event_types = []
         for event in events:
             if "event:" in event:
                 event_type = event.split("event:")[1].split("\n")[0].strip()
                 event_types.append(event_type)
-        
+
         print(f"Event types: {event_types}")
-        assert "message_start" in event_types
-        assert "content_block_start" in event_types
-        assert "content_block_delta" in event_types
-        assert "content_block_stop" in event_types
-        assert "message_delta" in event_types
-        assert "message_stop" in event_types
+        assert event_types == [
+            "message_start",
+            "content_block_start",
+            "content_block_delta",
+            "content_block_stop",
+            "content_block_start",
+            "content_block_stop",
+            "message_delta",
+            "message_stop",
+        ]
 
 
 class TestOpenAISSEEmulation:

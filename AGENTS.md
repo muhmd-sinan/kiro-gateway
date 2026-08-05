@@ -126,7 +126,7 @@ When debugging this error, systematic testing is required to identify the actual
 ### Running the Server
 
 ```bash
-# Default (host: 0.0.0.0, port: 8000)
+# Default (host: 0.0.0.0, port: 8787)
 python main.py
 
 # Custom port
@@ -136,7 +136,7 @@ python main.py --port 9000
 python main.py --host 127.0.0.1 --port 9000
 
 # Using uvicorn directly
-uvicorn main:app --host 0.0.0.0 --port 8000
+uvicorn main:app --host 0.0.0.0 --port 8787
 ```
 
 ### Testing
@@ -198,7 +198,7 @@ docker build -t kiro-gateway .
 
 # Run with Docker (using environment variables)
 docker run -d \
-  -p 8000:8000 \
+  -p 8787:8787 \
   -e PROXY_API_KEY="your-secret-key" \
   -e REFRESH_TOKEN="your-refresh-token" \
   --name kiro-gateway \
@@ -221,7 +221,7 @@ docker-compose --env-file .env.production up -d
 
 # Mount credentials file (Kiro IDE)
 docker run -d \
-  -p 8000:8000 \
+  -p 8787:8787 \
   -v ~/.aws/sso/cache:/home/kiro/.aws/sso/cache:ro \
   -e KIRO_CREDS_FILE=/home/kiro/.aws/sso/cache/kiro-auth-token.json \
   -e PROXY_API_KEY="your-secret-key" \
@@ -230,7 +230,7 @@ docker run -d \
 
 # Mount kiro-cli database
 docker run -d \
-  -p 8000:8000 \
+  -p 8787:8787 \
   -v ~/.local/share/kiro-cli:/home/kiro/.local/share/kiro-cli \
   -e KIRO_CLI_DB_FILE=/home/kiro/.local/share/kiro-cli/data.sqlite3 \
   -e PROXY_API_KEY="your-secret-key" \
@@ -540,7 +540,7 @@ KIRO_CLI_DB_FILE="~/.local/share/kiro-cli/data.sqlite3" # SQLite DB
 PROFILE_ARN="arn:aws:codewhisperer:us-east-1:..."
 KIRO_REGION="us-east-1"
 SERVER_HOST="0.0.0.0"
-SERVER_PORT="8000"
+SERVER_PORT="8787"
 VPN_PROXY_URL="http://127.0.0.1:7890"  # For restricted networks
 
 # Debug logging (off by default)
@@ -551,7 +551,7 @@ DEBUG_MODE="off"  # or "errors" or "all"
 
 1. CLI arguments: `python main.py --port 9000`
 2. Environment variables: `SERVER_PORT=9000`
-3. Default values: `8000`
+3. Default values: `8787`
 
 ## Important Patterns and Gotchas
 
@@ -824,8 +824,8 @@ pytest tests/unit/test_<module>.py::test_<name> -v -s
 
 ```bash
 # Check if port is already in use
-lsof -i :8000  # Linux/macOS
-netstat -ano | findstr :8000  # Windows
+lsof -i :8787  # Linux/macOS
+netstat -ano | findstr :8787  # Windows
 
 # Use different port
 python main.py --port 9000

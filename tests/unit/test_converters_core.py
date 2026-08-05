@@ -19,6 +19,8 @@ from kiro.converters_core import (
     extract_text_content,
     extract_images_from_content,
     convert_images_to_kiro_format,
+    extract_documents_from_content,
+    convert_documents_to_kiro_format,
     merge_adjacent_messages,
     ensure_first_message_is_user,
     normalize_message_roles,
@@ -1049,6 +1051,232 @@ class TestConvertImagesToKiroFormat:
         assert len(result) == 1
         assert result[0]["source"]["bytes"] == ""
         assert result[0]["format"] == "jpeg"
+
+
+# ==================================================================================================
+# Tests for extract_documents_from_content (PDF forwarding)
+# ==================================================================================================
+
+class TestExtractDocumentsFromContent:
+    """
+    Tests for extract_documents_from_content function.
+
+    Supports Anthropic (document with source) and OpenAI (file block) formats.
+    Ensures PDFs are extracted so they can be forwarded to Kiro instead of being
+    dropped or 422ing the request.
+    """
+
+    def test_extracts_from_anthropic_document_base64(self):
+        """
+        What it does: Extracts a PDF from an Anthropic document block.
+        Purpose: Ensure Anthropic document format is handled and title is kept.
+        """
+        content = [
+            {"type": "text", "text": "Summarize this"},
+            {
+                "type": "document",
+                "title": "spec.pdf",
+                "source": {"type": "base64", "media_type": "application/pdf", "data": "JVBERi0x"}
+            }
+        ]
+
+        result = extract_documents_from_content(content)
+
+        assert len(result) == 1
+        assert result[0]["media_type"] == "application/pdf"
+        assert result[0]["data"] == "JVBERi0x"
+        assert result[0]["name"] == "spec.pdf"
+
+    def test_anthropic_document_default_name_from_media_type(self):
+        """
+        What it does: Falls back to a generated name when title is absent.
+        Purpose: Ensure a sensible filename is always present.
+        """
+        content = [
+            {
+                "type": "document",
+                "source": {"type": "base64", "media_type": "application/pdf", "data": "abc"}
+            }
+        ]
+
+        result = extract_documents_from_content(content)
+
+        assert len(result) == 1
+        assert result[0]["name"] == "document.pdf"
+
+    def test_extracts_from_openai_file_data_url(self):
+        """
+        What it does: Extracts a PDF from an OpenAI file block with a data URL.
+        Purpose: Ensure OpenAI file format is parsed and filename is kept.
+        """
+        content = [
+            {"type": "text", "text": "Read this"},
+            {
+                "type": "file",
+                "file": {"filename": "report.pdf", "file_data": "data:application/pdf;base64,JVBERi0x"}
+            }
+        ]
+
+        result = extract_documents_from_content(content)
+
+        assert len(result) == 1
+        assert result[0]["media_type"] == "application/pdf"
+        assert result[0]["data"] == "JVBERi0x"
+        assert result[0]["name"] == "report.pdf"
+
+    def test_extracts_multiple_documents(self):
+        """
+        What it does: Extracts several documents from mixed content.
+        Purpose: Ensure all document blocks are captured.
+        """
+        content = [
+            {"type": "document", "title": "a.pdf",
+             "source": {"type": "base64", "media_type": "application/pdf", "data": "d1"}},
+            {"type": "text", "text": "and"},
+            {"type": "document", "title": "b.pdf",
+             "source": {"type": "base64", "media_type": "application/pdf", "data": "d2"}}
+        ]
+
+        result = extract_documents_from_content(content)
+
+        assert len(result) == 2
+        assert result[0]["data"] == "d1"
+        assert result[1]["data"] == "d2"
+
+    def test_skips_url_documents(self):
+        """
+        What it does: URL-based documents are skipped (not fetched).
+        Purpose: Ensure URL sources don't crash and produce no output.
+        """
+        content = [
+            {"type": "document", "source": {"type": "url", "url": "https://example.com/a.pdf"}}
+        ]
+
+        result = extract_documents_from_content(content)
+
+        assert result == []
+
+    def test_returns_empty_for_string_content(self):
+        """
+        What it does: String content yields no documents.
+        Purpose: Ensure non-list content is handled.
+        """
+        assert extract_documents_from_content("just text") == []
+
+    def test_returns_empty_for_none_content(self):
+        """
+        What it does: None content yields no documents.
+        Purpose: Ensure None doesn't raise.
+        """
+        assert extract_documents_from_content(None) == []
+
+    def test_returns_empty_for_image_only_content(self):
+        """
+        What it does: Image blocks don't produce documents.
+        Purpose: Ensure documents and images stay separate.
+        """
+        content = [
+            {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": "abc"}}
+        ]
+
+        assert extract_documents_from_content(content) == []
+
+
+# ==================================================================================================
+# Tests for convert_documents_to_kiro_format (PDF forwarding)
+# ==================================================================================================
+
+class TestConvertDocumentsToKiroFormat:
+    """
+    Tests for convert_documents_to_kiro_format function.
+
+    Unified format: [{"media_type": "application/pdf", "data": "base64...", "name": "a.pdf"}]
+    Kiro format:     [{"format": "pdf", "name": "a.pdf", "source": {"bytes": "base64..."}}]
+    """
+
+    def test_converts_single_document(self):
+        """
+        What it does: Converts a single PDF to Kiro format.
+        Purpose: Ensure format/name/source.bytes are built correctly.
+        """
+        documents = [{"media_type": "application/pdf", "data": "JVBERi0x", "name": "a.pdf"}]
+
+        result = convert_documents_to_kiro_format(documents)
+
+        assert len(result) == 1
+        assert result[0]["format"] == "pdf"
+        assert result[0]["name"] == "a.pdf"
+        assert result[0]["source"]["bytes"] == "JVBERi0x"
+
+    def test_converts_multiple_documents(self):
+        """
+        What it does: Converts multiple documents.
+        Purpose: Ensure all documents are converted.
+        """
+        documents = [
+            {"media_type": "application/pdf", "data": "d1", "name": "a.pdf"},
+            {"media_type": "application/pdf", "data": "d2", "name": "b.pdf"}
+        ]
+
+        result = convert_documents_to_kiro_format(documents)
+
+        assert len(result) == 2
+        assert result[0]["format"] == "pdf"
+        assert result[1]["name"] == "b.pdf"
+
+    def test_returns_empty_for_none(self):
+        """
+        What it does: None yields empty list.
+        Purpose: Ensure None is handled.
+        """
+        assert convert_documents_to_kiro_format(None) == []
+
+    def test_returns_empty_for_empty_list(self):
+        """
+        What it does: Empty list yields empty list.
+        Purpose: Ensure empty input is handled.
+        """
+        assert convert_documents_to_kiro_format([]) == []
+
+    def test_skips_documents_with_empty_data(self):
+        """
+        What it does: Skips documents with empty data.
+        Purpose: Ensure empty payloads aren't forwarded.
+        """
+        documents = [
+            {"media_type": "application/pdf", "data": "", "name": "a.pdf"},
+            {"media_type": "application/pdf", "data": "valid", "name": "b.pdf"}
+        ]
+
+        result = convert_documents_to_kiro_format(documents)
+
+        assert len(result) == 1
+        assert result[0]["name"] == "b.pdf"
+
+    def test_strips_data_url_prefix(self):
+        """
+        What it does: Strips a data URL prefix left in the data field.
+        Purpose: Ensure Kiro receives pure base64 (mirrors image behavior).
+        """
+        documents = [{"media_type": "application/pdf", "data": "data:application/pdf;base64,JVBERi0x", "name": "a.pdf"}]
+
+        result = convert_documents_to_kiro_format(documents)
+
+        assert len(result) == 1
+        assert result[0]["format"] == "pdf"
+        assert result[0]["source"]["bytes"] == "JVBERi0x"
+
+    def test_generates_name_when_missing(self):
+        """
+        What it does: Generates a fallback name when none is given.
+        Purpose: Ensure Kiro always gets a document name.
+        """
+        documents = [{"media_type": "application/pdf", "data": "abc"}]
+
+        result = convert_documents_to_kiro_format(documents)
+
+        assert len(result) == 1
+        assert result[0]["name"] == "document.pdf"
 
 
 # ==================================================================================================
