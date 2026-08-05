@@ -36,6 +36,9 @@ requests/
 .pytest_cache/
 .coverage
 htmlcov/
+
+# Personal test fixtures (contain real PII — keep local, never publish)
+tests/Muhammed_Sinan_CP_CV.pdf
 # kiro-gateway runtime artifacts (Windows helper scripts)
 kiro-gateway.pid
 kiro-gateway.log

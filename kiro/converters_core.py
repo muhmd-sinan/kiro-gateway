@@ -31,6 +31,7 @@ to convert their formats to Kiro API format.
 """
 
 import json
+import re
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -423,6 +424,34 @@ def _default_document_name(media_type: str) -> str:
     """Build a fallback document name from a media type (e.g. "application/pdf" -> "document.pdf")."""
     ext = media_type.split("/")[-1] if "/" in media_type else media_type
     return f"document.{ext}" if ext else "document"
+
+
+def _sanitize_document_name(name: Optional[str], media_type: str) -> str:
+    """Coerce a document name to what the Kiro API accepts.
+
+    Kiro rejects a document (HTTP 400, reason=INVALID_DOCUMENT_NAME) unless its
+    name is 1-200 characters made up only of alphanumerics, whitespace, hyphens,
+    underscores, parentheses or square brackets, with no consecutive whitespace.
+    Notably a plain filename such as "report.pdf" fails on the '.' before the
+    extension, so every real upload needs sanitizing before it reaches Kiro.
+
+    Args:
+        name: Requested document name (may be None or contain illegal chars)
+        media_type: Media type used to build a fallback name when needed
+
+    Returns:
+        A name guaranteed to satisfy the Kiro document-name constraints.
+    """
+    candidate = name or _default_document_name(media_type)
+    # Replace any disallowed character (e.g. '.') with an underscore.
+    candidate = re.sub(r"[^A-Za-z0-9\s_()\[\]-]", "_", candidate)
+    # Collapse runs of (possibly unicode) whitespace into a single ASCII space,
+    # then trim leading/trailing spaces and underscores.
+    candidate = re.sub(r"\s+", " ", candidate).strip(" _")
+    # Enforce the 1-200 character bound.
+    if len(candidate) > 200:
+        candidate = candidate[:200].strip(" _")
+    return candidate or "document"
 
 
 # ==================================================================================================
@@ -861,7 +890,7 @@ def convert_documents_to_kiro_format(documents: Optional[List[Dict[str, Any]]]) 
     for doc in documents:
         media_type = doc.get("media_type", "application/pdf")
         data = doc.get("data", "")
-        name = doc.get("name") or _default_document_name(media_type)
+        raw_name = doc.get("name")
 
         if not data:
             logger.warning("Skipping document with empty data")
@@ -882,6 +911,12 @@ def convert_documents_to_kiro_format(documents: Optional[List[Dict[str, Any]]]) 
 
         # Extract format from media_type: "application/pdf" -> "pdf"
         format_str = media_type.split("/")[-1] if "/" in media_type else media_type
+
+        # Sanitize the name to satisfy Kiro's INVALID_DOCUMENT_NAME constraints
+        # (e.g. a plain "report.pdf" is rejected because of the '.').
+        name = _sanitize_document_name(raw_name, media_type)
+        if raw_name and name != raw_name:
+            logger.debug(f"Sanitized document name '{raw_name}' -> '{name}'")
 
         kiro_documents.append({
             "format": format_str,

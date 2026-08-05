@@ -12,6 +12,7 @@ Tests for shared conversion logic used by both OpenAI and Anthropic adapters:
 """
 
 import os
+import re
 import pytest
 from unittest.mock import patch
 
@@ -1205,7 +1206,8 @@ class TestConvertDocumentsToKiroFormat:
 
         assert len(result) == 1
         assert result[0]["format"] == "pdf"
-        assert result[0]["name"] == "a.pdf"
+        # '.' is illegal in Kiro document names, so it is sanitized to '_'.
+        assert result[0]["name"] == "a_pdf"
         assert result[0]["source"]["bytes"] == "JVBERi0x"
 
     def test_converts_multiple_documents(self):
@@ -1222,7 +1224,7 @@ class TestConvertDocumentsToKiroFormat:
 
         assert len(result) == 2
         assert result[0]["format"] == "pdf"
-        assert result[1]["name"] == "b.pdf"
+        assert result[1]["name"] == "b_pdf"
 
     def test_returns_empty_for_none(self):
         """
@@ -1251,7 +1253,7 @@ class TestConvertDocumentsToKiroFormat:
         result = convert_documents_to_kiro_format(documents)
 
         assert len(result) == 1
-        assert result[0]["name"] == "b.pdf"
+        assert result[0]["name"] == "b_pdf"
 
     def test_strips_data_url_prefix(self):
         """
@@ -1276,7 +1278,51 @@ class TestConvertDocumentsToKiroFormat:
         result = convert_documents_to_kiro_format(documents)
 
         assert len(result) == 1
-        assert result[0]["name"] == "document.pdf"
+        # Fallback name "document.pdf" is sanitized ('.' -> '_') for Kiro.
+        assert result[0]["name"] == "document_pdf"
+
+    def test_sanitizes_illegal_characters_in_name(self):
+        """
+        What it does: Replaces characters Kiro forbids in document names.
+        Purpose: Regression guard for HTTP 400 INVALID_DOCUMENT_NAME — Kiro
+        rejects names containing '.', '/', etc. A real filename like
+        "Muhammed_Sinan_CP_CV.pdf" must be coerced to a legal name.
+        """
+        documents = [{"media_type": "application/pdf", "data": "abc",
+                      "name": "Muhammed_Sinan_CP_CV.pdf"}]
+
+        result = convert_documents_to_kiro_format(documents)
+
+        assert result[0]["name"] == "Muhammed_Sinan_CP_CV_pdf"
+        # Only Kiro-legal characters remain.
+        assert re.fullmatch(r"[A-Za-z0-9 _()\[\]-]+", result[0]["name"])
+
+    def test_collapses_consecutive_whitespace_in_name(self):
+        """
+        What it does: Collapses runs of whitespace and strips edges.
+        Purpose: Kiro rejects names with consecutive whitespace.
+        """
+        documents = [{"media_type": "application/pdf", "data": "abc",
+                      "name": "  my   report  .pdf "}]
+
+        result = convert_documents_to_kiro_format(documents)
+
+        name = result[0]["name"]
+        assert "  " not in name
+        assert name == name.strip()
+        assert re.fullmatch(r"[A-Za-z0-9 _()\[\]-]+", name)
+
+    def test_caps_name_length_at_200(self):
+        """
+        What it does: Truncates over-long names to 200 characters.
+        Purpose: Kiro rejects names longer than 200 characters.
+        """
+        documents = [{"media_type": "application/pdf", "data": "abc",
+                      "name": "a" * 250}]
+
+        result = convert_documents_to_kiro_format(documents)
+
+        assert len(result[0]["name"]) == 200
 
 
 # ==================================================================================================
